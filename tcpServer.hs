@@ -25,12 +25,12 @@ main = withSocketsDo $ do -- Inicializar subsistema de rede em SO windows
                                      -- PortNumber : Tipo relativo a um num
   printf "Chat server started on port: %s\n" (show port) -- Imprime a porta que será utilizada
   forever $ do -- forever: Define um loop
-    (handle, host, port) <- accept sock -- Aceita uma conexão ao socket
+    (handle, host, port) <- accept sock -- Aceita uma conexão ao socket 
                                         -- Retorna o gerenciador de IO, número do host e a porta da conexão
-      printf "Connection %s: %s\n" host (show port)
-      forkFinally (talk handle server) (\_ -> hClose handle) -- Dá fork na thread e chama a função fornecida quando a thread está perto de finalizar
-                                                             -- Ao finalizar uma "talk" (talk handle server), chama  (\_ -> hClose handle)
-                                                             --  (\_ -> hClose handle) : Finaliza handle, se hdl for gravável, buffer é liberado para hflush
+    printf "Connection %s: %s\n" host (show port)
+    forkFinally (talk handle server) (\_ -> hClose handle)  -- Dá fork na thread e chama a função fornecida quando a thread está perto de finalizar
+                                                              -- Ao finalizar uma "talk" (talk handle server), chama  (\_ -> hClose handle)
+                                                              --  (\_ -> hClose handle) : Finaliza handle, se hdl for gravável, buffer é liberado para hflush
 
 -- Data structures and initialisation
 
@@ -101,12 +101,15 @@ talk handle server@Server{..} = do -- função talk recebe o handle e o servidor
     name <- hGetLine handle -- Lê o nome com o hGetLine
     if null name -- Se estiver vazio
       then readName -- Pede pra ler de novo
-      else mask $ \restore -> do        -- <1> Senão (?) mask: Mascara excessões assíncronas tal que qualquer encadeamento que tente gerar excessão
-                                        -- será bloqueado até que excessões assíncronas sejam desmascaradas
-                                        -- o argumento de mask é uma função lambda \restore
+      else mask $ \restore -> do        -- <1> Senão (?) mask: Executa uma computação de IO com excessões assíncronas mascaradas,
+                                        -- tal que qualquer thread que tente lançar excessões na thread corrente
+                                        -- será bloqueada até que as excessões assíncronas sejam desmascaradas.
+                                        -- O argumento de mask é uma função lambda (\), que recebe como argumento outra função (restore).
+                                        -- restore é usada para restaurar o estado de mascaramento prevalecente dentro do contexto da computação mascarada.
+                                        -- A função lambda recebe restore e chama todo o bloco do abaixo:
              ok <- checkAddClient server name handle -- Chama a função checkAddClient para ver se já existe cliente com esse nome e guarda em ok
              case ok of -- se ok contiver Nothing, é porque o nome já existe
-               Nothing -> restore $ do  -- <2> -- chama novamente restore
+               Nothing -> restore $ do  -- <2> -- chama restore
                   hPrintf handle
                      "Name %s is in use please choose different username\n" name --Printa mensagem
                   readName -- Lê novamente o nome
