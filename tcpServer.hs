@@ -120,49 +120,58 @@ talk handle server@Server{..} = do -- função talk recebe o handle e o servidor
 
 --checkAddClient
 checkAddClient :: Server -> ClientName -> Handle -> IO (Maybe Client)
-checkAddClient server@Server{..} name handle = atomically $ do
-  clientmap <- readTVar clients
-  if Map.member name clientmap
-    then return Nothing
-    else do client <- newClient name handle
-            writeTVar clients $ Map.insert name client clientmap
-            broadcast server  $ Notice (name ++ " joined")
-            return (Just client)
+checkAddClient server@Server{..} name handle = atomically $ do -- checkAddClient recebe o servidor, nome do cliente e o handle
+                                                               -- atomically: Torna possível rodar uma transação dentro de outra (executa uma série de ações STM atomicamente)
+                                                               -- STM : Monad que suporta transações atômicas de memória
+  clientmap <- readTVar clients -- readTVar : Recebe o Tvar clients definido previamente e retorna os valores armazenados no momento
+  if Map.member name clientmap -- Map.member : recebe a chave(name) e o map(clientmap) e procura se a chave se encontra no map
+    then return Nothing -- Se estiver retorna Nothing
+    else do client <- newClient name handle -- Se não tiver cria novo cliente passando o nome e o handle e armazena em client
+            writeTVar clients $ Map.insert name client clientmap -- writeTVar recebe um Tvar clients um Map
+                                                                 -- Map.insert recebe o nome, o client e insere como chave e valor no map "clientmap", passando esse resultado para TVar
+            broadcast server  $ Notice (name ++ " joined") -- broadcast recebe servidor e a mensagem do tipo Notice que é composta por uma string (name ++ " joined"), compartilhando com todos
+            return (Just client)                           -- Retorna o cliente adicionado
 
 --removeClient
 removeClient :: Server -> ClientName -> IO ()
-removeClient server@Server{..} name = atomically $ do
-  modifyTVar' clients $ Map.delete name
-  broadcast server $ Notice (name ++ " left")
+removeClient server@Server{..} name = atomically $ do -- removeClient: Recebe como parametro o servidor e o nome do cliente
+                                                      -- atomically: Permite transações dentro de outra transação
+  modifyTVar' clients $ Map.delete name -- modifyTVar acessa TVar clients e o novo map, resultado do (Map.delete name), sem nome do cliente deletado
+  broadcast server $ Notice (name ++ " left") -- Notifica por meio da função broadcast à todos os clientes do servidor que a pessoa saiu
 
 --runClient
 runClient :: Server -> Client -> IO ()
-runClient serv@Server{..} client@Client{..} = do
-  race server receive
-  return ()
+runClient serv@Server{..} client@Client{..} = do -- runClient recebe um servidor e um cliente
+  race server receive -- race: executa duas ações de IO ao mesmo tempo e retorna a primeira a finalizar, a outra é cancelada
+                      -- recebe server como primeira função e receive como segunda
+  return ()           -- chama o retorno do race
  where
-  receive = forever $ do
-    msg <- hGetLine clientHandle
-    atomically $ sendMessage client (Command msg)
+  receive = forever $ do -- Define a função receive como um loop
+    msg <- hGetLine clientHandle -- hGetLine: Lê mensagem do gerenciador de IO do cliente (Handle) e retorna a mensagem (char) em msg
+    atomically $ sendMessage client (Command msg) -- Dentro dessa transação executa sendMessage passando o client e uma mensagem do tipo Command
 
-  server = join $ atomically $ do
-   msg <- readTChan clientSendChan
-   return $ do
-     continue <- handleMessage serv client msg
-     when continue $ server
+  server = join $ atomically $ do -- Define a função server
+                                  -- join: Operador convencional de junção de monads (usado para remover um nível de estrutura monádica)
+                                  --  join $ atomically $ : Composição dos monads join e atomically para rodar transações STM e ação IO retornada
+   msg <- readTChan clientSendChan -- readTChan recebe a FIFO criada e passa seu conteúdo para msg
+   return $ do --return da monad (?)
+     continue <- handleMessage serv client msg -- Chama função handleMessage passando o servidor, o cliente e a mensagem, armazenando o retorno booleano em continue
+     when continue $ server -- when : Faz parte da Control.Monad, é um condicional para execução de expressões candidatas
+                            -- Se continue for verdadeiro, chama a função server recursivamente
 
 --handleMessage different type of message
 handleMessage :: Server -> Client -> Message -> IO Bool
-handleMessage server client@Client{..} message =
+handleMessage server client@Client{..} message = -- Define a handleMessage passando o servidor, o client e a mensagem
   case message of
-     Notice msg         -> output $ "*** " ++ msg
-     Broadcast name msg -> output $ name ++ ": " ++ msg
-     Command msg ->
-       case words msg of
+     Notice msg         -> output $ "*** " ++ msg -- Se a mensagem for do tipo Notice a saída recebe *** no início
+     Broadcast name msg -> output $ name ++ ": " ++ msg -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem
+     Command msg -> -- Se for do tipo Command
+       case words msg of -- Testa se é KILL_SERVICE
            ["KILL_SERVICE"] ->
-               return False
+               return False -- Se for retorna False para parar a leitura da FIFO
            _ -> do
-               atomically $ broadcast server $ Broadcast clientName msg
-               return True
+               atomically $ broadcast server $ Broadcast clientName msg -- Senão roda as funções broadcast passando clientName e msg e server (?)
+               return True -- E retorna True para manter runClient funcionando
  where
-   output s = do hPutStrLn clientHandle s; return True
+   output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
+                                                       -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
