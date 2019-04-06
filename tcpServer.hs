@@ -18,6 +18,7 @@ main :: IO () -- Função principal do módulo Main
 main = withSocketsDo $ do -- Inicializar subsistema de rede em SO windows
   server <- newServer -- Chama função newServer, devolvendo um Servidor criado
   args <- getArgs -- Pega os argumentos passados como argumento na execução do programa
+  allMessages <- newAllMessages
   let port = fromIntegral (read $ head args :: Int) -- read: Pega bloco de coisa e transforma em valor
                                                     -- | head args:Pega primeiro argumento de args | :: Int - Converte para inteiro
                                                     -- | fromIntegral : transforma inteiro ou integer em tipo de número mais genérico (Ex: Somar float e int)
@@ -28,7 +29,7 @@ main = withSocketsDo $ do -- Inicializar subsistema de rede em SO windows
     (handle, host, port) <- accept sock -- Aceita uma conexão ao socket
                                         -- Retorna o gerenciador de IO, número do host e a porta da conexão
     printf "Connection %s: %s\n" host (show port)
-    forkFinally (talk handle server) (\_ -> hClose handle)  -- Dá fork na thread e chama a função fornecida quando a thread está perto de finalizar
+    forkFinally (talk handle server allMessages) (\_ -> hClose handle)  -- Dá fork na thread e chama a função fornecida quando a thread está perto de finalizar
                                                               -- Ao finalizar uma "talk" (talk handle server), chama  (\_ -> hClose handle)
                                                               --  (\_ -> hClose handle) : Finaliza handle, se hdl for gravável, buffer é liberado para hflush
 
@@ -57,43 +58,41 @@ newClient name handle = do -- Função que cria um novo cliente, recebe o nome e
 --Server
 data Server = Server
   { clients :: TVar (Map ClientName Client) -- Server é composto por clients cuja estrutura consiste em local de memória compatilhada que
-  }                                         -- contém o mapeamento dos nomes de todos os clientes?
+                                            -- contém o mapeamento dos nomes de todos os clientes?
+  -- , messages :: TVar (Map String Message)
+  }                                       
 
 newServer :: IO Server
 newServer = do -- Função new server cria servidor e retorna-o
   c <- newTVarIO Map.empty -- Cria newTVarIO versão IO de TVar, vazio
-  return Server { clients = c } -- Retorna servidor preenchido com esse TVar de clientes "vazio"
-
+  return Server { clients = c } -- Retorna servidor preenchido com TVar de clientes "vazio"
 
 --Message
 data Message = Notice String -- Mensagem do servidor
              | Tell ClientName String -- Mensagem privada de outro cliente
-             | Broadcast ClientName String -- ? Mensagem de texto para vários clientes
+             | Broadcast ClientName String String -- ? Mensagem de texto para vários clientes
              | Command String -- Linha de texto recebido do usuário
+             | Reply ClientName String String -- Reply recebe o id da msg respondida e a msg de resposta
              | Message
              {
-               idMessage :: Int
+               idMessage :: String
                ,message :: Message
              }
 
-
-data AllMessages = AllMessages { messages :: TVar (Map Int Message) }
+data AllMessages = AllMessages
+  { messages :: TVar (Map String Message) }
 
 newAllMessages :: IO AllMessages
 newAllMessages = do
-      m <- newTVarIO Map.empty
-      return AllMessages { messages = m }
+  m <- newTVarIO Map.empty
+  return AllMessages { messages = m }
 
-newMessage :: Message -> Int -> STM Message
+newMessage :: Message -> String -> STM Message
 newMessage msg id = do
       return Message
             { idMessage = id
               , message = msg
             }
-
--- messagemap <- readTVar messages
--- message <- newMessage msg
---writeTVar messages $ Map.insert 0 message messagemap
 
 -- test :: Message -> IO ()
 -- test = do
@@ -101,11 +100,18 @@ newMessage msg id = do
 --   mapM_ (\message -> hPutStrLn clientHandle message) (Map.elems messagemap)
 
 --broadcast
-broadcast :: Server -> Message -> STM ()
-broadcast Server{..} msg = do -- Função broadcast que recebe os dados do servidor e a mensagem e envia a mensagem para todos os clientes no servidor
+broadcast :: Server -> AllMessages -> Message -> STM ()
+broadcast Server{..} AllMessages{..} message = do -- Função broadcast que recebe os dados do servidor e a mensagem e envia a mensagem para todos os clientes no servidor
+  case message of
+    Broadcast id name msg -> do
+        messagemap <- readTVar messages
+        msg <- newMessage message "0"
+        writeTVar messages $ Map.insert "0" msg messagemap
   clientmap <- readTVar clients -- readTVar : Recebe o Tvar clients definido previamente e retorna os valores armazenados no momento
-  mapM_ (\client -> sendMessage client msg) (Map.elems clientmap) -- Para cada client em clientmap aplica a função sendMessage, enviando a Mensagem
+  mapM_ (\client -> sendMessage client message) (Map.elems clientmap) -- Para cada client em clientmap aplica a função sendMessage, enviando a Mensagem
                                                                   -- mapM_ : Ignora os retornos das funções
+
+-- saveMessage :: Server ->
 
 -- <<sendMessage
 sendMessage :: Client -> Message -> STM ()
@@ -116,8 +122,8 @@ sendMessage Client{..} msg = -- Função sendMessage recebe um Client com todos 
 
 --Server handling
 
-talk :: Handle -> Server -> IO ()
-talk handle server@Server{..} = do -- função talk recebe o handle e o servidor com lista de clientes,
+talk :: Handle -> Server -> AllMessages -> IO ()
+talk handle server@Server{..} allMessages@AllMessages{..} = do -- função talk recebe o handle e o servidor com lista de clientes,
                                    -- server@Server{..} nomeia todo o server com o apelido server
   hSetNewlineMode handle universalNewlineMode -- Configura modos de leitura (?) da linha como universal (usa o \n)
       -- Swallow carriage returns sent by telnet clients
@@ -136,20 +142,20 @@ talk handle server@Server{..} = do -- função talk recebe o handle e o servidor
                                         -- O argumento de mask é uma função lambda (\), que recebe como argumento outra função (restore).
                                         -- restore é usada para restaurar o estado de mascaramento prevalecente dentro do contexto da computação mascarada.
                                         -- A função lambda recebe restore e chama todo o bloco do abaixo:
-             ok <- checkAddClient server name handle -- Chama a função checkAddClient para ver se já existe cliente com esse nome e guarda em ok
+             ok <- checkAddClient server allMessages name handle -- Chama a função checkAddClient para ver se já existe cliente com esse nome e guarda em ok
              case ok of -- se ok contiver Nothing, é porque o nome já existe
                Nothing -> restore $ do  -- <2> -- chama restore
                   hPrintf handle
                      "Name %s is in use please choose different username\n" name --Printa mensagem
                   readName -- Lê novamente o nome
                Just client -> -- Só para client
-                  restore (runClient server client) -- <3> Se o nome for aceito, desmascaramos as exceções assíncronas ao chamar runClient
+                  restore (runClient server client allMessages) -- <3> Se o nome for aceito, desmascaramos as exceções assíncronas ao chamar runClient
                                                     -- passando o servidor e o cliente
-                      `finally` removeClient server name -- Por fim, remove o cliente através de removeClient passando o servidor e o nome
+                      `finally` removeClient server allMessages name -- Por fim, remove o cliente através de removeClient passando o servidor e o nome
 
 --checkAddClient
-checkAddClient :: Server -> ClientName -> Handle -> IO (Maybe Client)
-checkAddClient server@Server{..} name handle = atomically $ do -- checkAddClient recebe o servidor, nome do cliente e o handle
+checkAddClient :: Server -> AllMessages -> ClientName -> Handle -> IO (Maybe Client)
+checkAddClient server@Server{..} allMessages@AllMessages{..} name handle = atomically $ do -- checkAddClient recebe o servidor, nome do cliente e o handle
                                                                -- atomically: Torna possível rodar uma transação dentro de outra (executa uma série de ações STM atomicamente)
                                                                -- STM : Monad que suporta transações atômicas de memória
   clientmap <- readTVar clients -- readTVar : Recebe o Tvar clients definido previamente e retorna os valores armazenados no momento
@@ -158,19 +164,19 @@ checkAddClient server@Server{..} name handle = atomically $ do -- checkAddClient
     else do client <- newClient name handle -- Se não tiver cria novo cliente passando o nome e o handle e armazena em client
             writeTVar clients $ Map.insert name client clientmap -- writeTVar recebe um Tvar clients um Map
                                                                  -- Map.insert recebe o nome, o client e insere como chave e valor no map "clientmap", passando esse resultado para TVar
-            broadcast server  $ Notice (name ++ " joined") -- broadcast recebe servidor e a mensagem do tipo Notice que é composta por uma string (name ++ " joined"), compartilhando com todos
+            broadcast server allMessages $ Notice (name ++ " joined") -- broadcast recebe servidor e a mensagem do tipo Notice que é composta por uma string (name ++ " joined"), compartilhando com todos
             return (Just client)                           -- Retorna o cliente adicionado
 
 --removeClient
-removeClient :: Server -> ClientName -> IO ()
-removeClient server@Server{..} name = atomically $ do -- removeClient: Recebe como parametro o servidor e o nome do cliente
+removeClient :: Server -> AllMessages -> ClientName -> IO ()
+removeClient server@Server{..} allMessages@AllMessages{..} name = atomically $ do -- removeClient: Recebe como parametro o servidor e o nome do cliente
                                                       -- atomically: Permite transações dentro de outra transação
   modifyTVar' clients $ Map.delete name -- modifyTVar acessa TVar clients e o novo map, resultado do (Map.delete name), sem nome do cliente deletado
-  broadcast server $ Notice (name ++ " left") -- Notifica por meio da função broadcast à todos os clientes do servidor que a pessoa saiu
+  broadcast server allMessages $ Notice (name ++ " left") -- Notifica por meio da função broadcast à todos os clientes do servidor que a pessoa saiu
 
 --runClient
-runClient :: Server -> Client -> IO ()
-runClient serv@Server{..} client@Client{..} = do -- runClient recebe um servidor e um cliente
+runClient :: Server -> Client -> AllMessages -> IO ()
+runClient serv@Server{..} client@Client{..} allMessages@AllMessages{..} = do -- runClient recebe um servidor e um cliente
   race server receive -- race: executa duas ações de IO ao mesmo tempo e retorna a primeira a finalizar, a outra é cancelada
                       -- recebe server como primeira função e receive como segunda
   return ()           -- chama o retorno do race
@@ -184,24 +190,42 @@ runClient serv@Server{..} client@Client{..} = do -- runClient recebe um servidor
                                   --  join $ atomically $ : Composição dos monads join e atomically para rodar transações STM e ação IO retornada
    msg <- readTChan clientSendChan -- readTChan recebe a FIFO criada e passa seu conteúdo para msg
    return $ do --return da monad (?)
-     continue <- handleMessage serv client msg -- Chama função handleMessage passando o servidor, o cliente e a mensagem, armazenando o retorno booleano em continue
+     continue <- handleMessage serv allMessages client msg -- Chama função handleMessage passando o servidor, o cliente e a mensagem, armazenando o retorno booleano em continue
      when continue $ server -- when : Faz parte da Control.Monad, é um condicional para execução de expressões candidatas
                             -- Se continue for verdadeiro, chama a função server recursivamente
 
 
 --handleMessage different type of message
-handleMessage :: Server -> Client -> Message -> IO Bool
-handleMessage server client@Client{..} message = -- Define a handleMessage passando o servidor, o client e a mensagem
+handleMessage :: Server -> AllMessages -> Client -> Message -> IO Bool
+handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- Define a handleMessage passando o servidor, o client e a mensagem
   case message of
      Notice msg         -> output $ "*** " ++ msg -- Se a mensagem for do tipo Notice a saída recebe *** no início
-     Broadcast name msg -> output $ name ++ ": " ++ msg -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem
+     Broadcast name id msg -> output $ name ++ ": [" ++ id ++ "] " ++ msg  -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem 
+     Reply name id msg -> output $ name ++ ": Reply for message " ++ id ++ msg
      Command msg -> -- Se for do tipo Command
        case words msg of -- Testa se é KILL_SERVICE
            ["KILL_SERVICE"] ->
                return False -- Se for retorna False para parar a leitura da FIFO
+           ["\r"] -> do
+               atomically $ broadcast server allMessages $ Reply clientName (getId msg) (tail (tail msg))
+               return True
            _ -> do
-               atomically $ broadcast server $ Broadcast clientName msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
+               atomically $ broadcast server allMessages $ Broadcast clientName "0" msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
                return True -- E retorna True para manter runClient funcionando
  where
    output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
                                                        -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
+
+
+-- calcId :: Server -> String
+-- calcId Server{..} = do
+--   messagemap <- readTVar messages
+--   items <- Map.size messagemap
+--   return items
+
+
+getId :: String -> String
+getId msg = do
+  id <- head (tail (words msg))
+  test <- show id
+  return test
