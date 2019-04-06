@@ -6,7 +6,7 @@ import Text.Printf
 import System.IO
 import Network
 import qualified Data.Map as Map
-import Data.Map (Map)
+import Data.Map (Map, size)
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.Async
@@ -25,7 +25,7 @@ main = withSocketsDo $ do -- Inicializar subsistema de rede em SO windows
                                      -- PortNumber : Tipo relativo a um num
   printf "Chat server started on port: %s\n" (show port) -- Imprime a porta que será utilizada
   forever $ do -- forever: Define um loop
-    (handle, host, port) <- accept sock -- Aceita uma conexão ao socket 
+    (handle, host, port) <- accept sock -- Aceita uma conexão ao socket
                                         -- Retorna o gerenciador de IO, número do host e a porta da conexão
     printf "Connection %s: %s\n" host (show port)
     forkFinally (talk handle server) (\_ -> hClose handle)  -- Dá fork na thread e chama a função fornecida quando a thread está perto de finalizar
@@ -70,9 +70,30 @@ data Message = Notice String -- Mensagem do servidor
              | Tell ClientName String -- Mensagem privada de outro cliente
              | Broadcast ClientName String -- ? Mensagem de texto para vários clientes
              | Command String -- Linha de texto recebido do usuário
-            --  | Message { messages :: TVar (Map Int Message) }
+             | Message
+             {
+               idMessage :: Int
+               ,message :: Message
+             }
 
--- newMessage :: Message -> Int -> 
+
+data AllMessages = AllMessages { messages :: TVar (Map Int Message) }
+
+newAllMessages :: IO AllMessages
+newAllMessages = do
+      m <- newTVarIO Map.empty
+      return AllMessages { messages = m }
+
+newMessage :: Message -> Int -> STM Message
+newMessage msg id = do
+      return Message
+            { idMessage = id
+              , message = msg
+            }
+
+-- messagemap <- readTVar messages
+-- message <- newMessage msg
+--writeTVar messages $ Map.insert 0 message messagemap
 
 -- test :: Message -> IO ()
 -- test = do
@@ -124,7 +145,7 @@ talk handle server@Server{..} = do -- função talk recebe o handle e o servidor
                Just client -> -- Só para client
                   restore (runClient server client) -- <3> Se o nome for aceito, desmascaramos as exceções assíncronas ao chamar runClient
                                                     -- passando o servidor e o cliente
-                      `finally` removeClient server name -- Por fim, remove o cliente através de removeClient passando o servidor e o nome 
+                      `finally` removeClient server name -- Por fim, remove o cliente através de removeClient passando o servidor e o nome
 
 --checkAddClient
 checkAddClient :: Server -> ClientName -> Handle -> IO (Maybe Client)
@@ -167,6 +188,7 @@ runClient serv@Server{..} client@Client{..} = do -- runClient recebe um servidor
      when continue $ server -- when : Faz parte da Control.Monad, é um condicional para execução de expressões candidatas
                             -- Se continue for verdadeiro, chama a função server recursivamente
 
+
 --handleMessage different type of message
 handleMessage :: Server -> Client -> Message -> IO Bool
 handleMessage server client@Client{..} message = -- Define a handleMessage passando o servidor, o client e a mensagem
@@ -178,10 +200,7 @@ handleMessage server client@Client{..} message = -- Define a handleMessage passa
            ["KILL_SERVICE"] ->
                return False -- Se for retorna False para parar a leitura da FIFO
            _ -> do
-              --  messagemap <- readTVar messages
-              --  message <- newMessage msg
-              --  writeTVar messages $ Map.insert id message messagemap
-               atomically $ broadcast server $ Broadcast clientName msg -- Senão roda as funções broadcast passando clientName e msg e server (?)
+               atomically $ broadcast server $ Broadcast clientName msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
                return True -- E retorna True para manter runClient funcionando
  where
    output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
