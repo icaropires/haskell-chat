@@ -70,6 +70,14 @@ data Message = Notice String -- Mensagem do servidor
              | Tell ClientName String -- Mensagem privada de outro cliente
              | Broadcast ClientName String -- ? Mensagem de texto para vários clientes
              | Command String -- Linha de texto recebido do usuário
+            --  | Message { messages :: TVar (Map Int Message) }
+
+-- newMessage :: Message -> Int -> 
+
+-- test :: Message -> IO ()
+-- test = do
+--   messagemap <- readTVar messages
+--   mapM_ (\message -> hPutStrLn clientHandle message) (Map.elems messagemap)
 
 --broadcast
 broadcast :: Server -> Message -> STM ()
@@ -97,7 +105,7 @@ talk handle server@Server{..} = do -- função talk recebe o handle e o servidor
  where
 --readName
   readName = do -- Função readName lê o nome e autentica
-    hPutStrLn handle "Please enter username" -- Imprime mensagem usando o gerente IO
+    hPutStrLn handle "Please emessagenter username" -- Imprime mensagem usando o gerente IO
     name <- hGetLine handle -- Lê o nome com o hGetLine
     if null name -- Se estiver vazio
       then readName -- Pede pra ler de novo
@@ -170,6 +178,9 @@ handleMessage server client@Client{..} message = -- Define a handleMessage passa
            ["KILL_SERVICE"] ->
                return False -- Se for retorna False para parar a leitura da FIFO
            _ -> do
+              --  messagemap <- readTVar messages
+              --  message <- newMessage msg
+              --  writeTVar messages $ Map.insert id message messagemap
                atomically $ broadcast server $ Broadcast clientName msg -- Senão roda as funções broadcast passando clientName e msg e server (?)
                return True -- E retorna True para manter runClient funcionando
  where
