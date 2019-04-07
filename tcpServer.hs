@@ -87,14 +87,20 @@ data Message = Notice String -- Mensagem do servidor
              }
 
 data AllMessages = AllMessages
-  { messages :: TVar (Map String Message) }
+  { messages :: TVar (Map String Message)
+  , countMessages :: TVar (Int)
+  }
 
 --newMessage
 
 newAllMessages :: IO AllMessages
 newAllMessages = do
   m <- newTVarIO Map.empty
-  return AllMessages { messages = m }
+  c <- newTVarIO 0
+  return AllMessages { 
+      messages = m
+    , countMessages = c 
+    }
 
 newMessage :: Message -> String -> STM Message
 newMessage msg id = do
@@ -103,22 +109,22 @@ newMessage msg id = do
               , message = msg
             }
 
--- Codigo Teste
-
--- printMessage :: Message -> IO ()
--- printMessage = do
---   messagemap <- readTVar messages
---   mapM_ (\message -> hPutStrLn clientHandle message) (Map.elems messagemap)
-
 --broadcast
-
 broadcast :: Server -> AllMessages -> Message -> STM ()
 broadcast Server{..} AllMessages{..} message = do -- Função broadcast que recebe os dados do servidor e a mensagem e envia a mensagem para todos os clientes no servidor
-  messagemap <- readTVar messages
-  msg <- newMessage message "0"
-  writeTVar messages $ Map.insert "0" msg messagemap
-  clientmap <- readTVar clients -- readTVar : Recebe o Tvar clients definido previamente e retorna os valores armazenados no momento
-  mapM_ (\client -> sendMessage client message) (Map.elems clientmap) -- Para cada client em clientmap aplica a função sendMessage, enviando a Mensagem
+  case message of
+    Broadcast name id msg -> do
+      i <- readTVar countMessages
+      writeTVar countMessages $ i + 1
+      messagemap <- readTVar messages
+      msg <- newMessage message (show $ i + 1)
+      writeTVar messages $ Map.insert (show $ i + 1) msg messagemap
+      defaultBroadcast
+    _ -> defaultBroadcast
+  where
+    defaultBroadcast = do
+    clientmap <- readTVar clients -- readTVar : Recebe o Tvar clients definido previamente e retorna os valores armazenados no momento
+    mapM_ (\client -> sendMessage client message) (Map.elems clientmap) -- Para cada client em clientmap aplica a função sendMessage, enviando a Mensagem
                                                                   -- mapM_ : Ignora os retornos das funções
 
 -- sendMessage
@@ -221,18 +227,12 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
             atomically $ broadcast server allMessages $ Reply clientName (getId (words msg)) (getMessage (words msg))
             return True
           else do
-            atomically $ broadcast server allMessages $ Broadcast clientName "1" msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
+            i <- readTVarIO countMessages
+            atomically $ broadcast server allMessages $ Broadcast clientName (show $ i + 1) msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
             return True
     where
       output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
                                                           -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
-
-
--- calcId :: Server -> String
---calcId allMessages@AllMessages{..} = do
---   messagemap <- readTVar messages
---   x <- count (Map.elems messagemap)
---   return True
 
 getId :: [String] -> String
 getId wd = do
