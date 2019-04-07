@@ -14,7 +14,7 @@ import Control.Exception
 import Control.Monad
 import System.Environment
 
--- main Function : Função principal do programa, faz todas as chamadas de métodos iniciais e mantém a conexão com o socket 
+-- main Function : Função principal do programa, faz todas as chamadas de métodos iniciais e mantém a conexão com o socket
 main :: IO ()
 main = withSocketsDo $ do -- Inicializar subsistema de rede em SO windows
 
@@ -171,13 +171,18 @@ talk handle server@Server{..} allMessages@AllMessages{..} = do -- função talk 
   readName -- Chama função para ler o nome
  where
 
+
+
 --readName Function : Lê um nome válido (Não vazio, não existente em Map)
                     -- Entradas : Não explícita
                     -- Saída : Execução do runClient, possibilita início da conversação
 
   readName = do
+    hPutStrLn handle "\ESC[2J"
+    hPutStrLn handle "\n------------------------------------------"
     hPutStrLn handle "Please, send your username" -- Imprime mensagem usando o gerente IO
     name <- hGetLine handle -- Lê o nome com o hGetLine
+    hPutStrLn handle "\n------------------------------------------"
     if null name -- Se estiver vazio
       then readName -- Pede pra ler de novo
       else mask $ \restore -> do        -- <1> Senão (?) mask: Executa uma computação de IO com excessões assíncronas mascaradas,
@@ -193,13 +198,15 @@ talk handle server@Server{..} allMessages@AllMessages{..} = do -- função talk 
                      "Name %s is in use please choose different username\n" name --Printa mensagem
                   readName -- Lê novamente o nome
                Just client -> -- Se for um Client (não existe ainda)
-                  restore (runClient server client allMessages) -- <3> Se o nome for aceito, desmascaramos as exceções assíncronas ao chamar runClient
+                  restore (runClient server client allMessages handle) -- <3> Se o nome for aceito, desmascaramos as exceções assíncronas ao chamar runClient
                                                     -- passando o servidor e o cliente
                       `finally` removeClient server allMessages name -- Por fim, remove o cliente através de removeClient passando o servidor e o nome
+
 
 --checkAddClient Function : Verifica se já existe cliente com o nome fornecido
                           -- Entrada : Servidor, Todas as  mensagens, Nome do Cliente, handle
                           -- Saída : Client, se o nome não for chave no Map, Nothing, se for
+
 
 
 checkAddClient :: Server -> AllMessages -> ClientName -> Handle -> IO (Maybe Client)
@@ -212,7 +219,7 @@ checkAddClient server@Server{..} allMessages@AllMessages{..} name handle = atomi
     else do client <- newClient name handle -- Se não tiver cria novo cliente passando o nome e o handle e armazena em client
             writeTVar clients $ Map.insert name client clientmap -- writeTVar recebe um Tvar clients um Map
                                                                  -- Map.insert recebe o nome, o client e insere como chave e valor no map "clientmap", passando esse resultado para TVar
-            broadcast server allMessages $ Notice (name ++ " joined") -- broadcast recebe servidor e a mensagem do tipo Notice que é composta por uma string (name ++ " joined"), compartilhando com todos
+            broadcast server allMessages $ Notice ( name ++ " joined\n--------------------------\n") -- broadcast recebe servidor e a mensagem do tipo Notice que é composta por uma string (name ++ " joined"), compartilhando com todos
             return (Just client)                           -- Retorna o cliente adicionado
 
 --removeClient Function : Remove cliente do map
@@ -231,12 +238,18 @@ removeClient server@Server{..} allMessages@AllMessages{..} name = atomically $ d
                     -- Saída: return ()
 
 
-runClient :: Server -> Client -> AllMessages -> IO ()
-runClient serv@Server{..} client@Client{..} allMessages@AllMessages{..} = do -- runClient recebe um servidor e um cliente
+runClient ::  Server -> Client -> AllMessages -> Handle-> IO ()
+runClient serv@Server{..} client@Client{..} allMessages@AllMessages{..} handle= do -- runClient recebe um servidor e um cliente
   race server receive -- race: executa duas ações de IO ao mesmo tempo e retorna a primeira a finalizar, a outra é cancelada
                       -- recebe server como primeira função e receive como segunda
+  printSession
   return ()           -- chama o retorno do race
  where
+
+  printSession = do
+    hPutStrLn handle "-------------------------------------------"
+    hPutStrLn handle "telnet localhost 5555 back to conversation!"
+    hPutStrLn handle "-------------------------------------------"
 
 -- receive Function : Mantem o "receptor" de mensagens rodando, lê do handle do cliente e envia (salva na FIFO)
                     -- Entrada : Sem argumento explícito
@@ -269,9 +282,9 @@ runClient serv@Server{..} client@Client{..} allMessages@AllMessages{..} = do -- 
 handleMessage :: Server -> AllMessages -> Client -> Message -> IO Bool
 handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- Define a handleMessage passando o servidor, o client e a mensagem
   case message of
-     Notice msg         -> output $ "*** " ++ msg -- Se a mensagem for do tipo Notice a saída recebe *** no início
-     Broadcast name id msg -> output $ name ++ ": [" ++ id ++ "] " ++ msg  -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem
-     Reply name id msg -> output $ name ++ ": Reply for message " ++ id ++ " >> " ++ msg
+     Notice msg         -> output $ "\n------------------------------------------\n*** " ++ msg -- Se a mensagem for do tipo Notice a saída recebe *** no início
+     Broadcast name id msg -> output $ name ++ ": [" ++ id ++ "] " ++ msg  ++ "\n" -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem
+     Reply name id msg -> output $ name ++ ": Reply for message " ++ id ++ " >> " ++ msg ++ "\n"
      Command msg -> do -- Se for do tipo Command
        if head(words msg) == "/q"
         then return False
@@ -289,7 +302,8 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
             atomically $ broadcast server allMessages $ Broadcast clientName (show $ i + 1) msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
             return True
     where
-      output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
+      output s = do
+          hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
                                                           -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
 
 -- checkId Function : Checa a validade do ID informado (Entre 1 e o último criado)
