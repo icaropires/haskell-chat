@@ -212,20 +212,20 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
   case message of
      Notice msg         -> output $ "*** " ++ msg -- Se a mensagem for do tipo Notice a saída recebe *** no início
      Broadcast name id msg -> output $ name ++ ": [" ++ id ++ "] " ++ msg  -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem
-     Reply name id msg -> output $ name ++ ": Reply for message " ++ id ++ msg
-     Command msg -> -- Se for do tipo Command
-       case words msg of -- Testa se é KILL_SERVICE
-           ["KILL_SERVICE"] ->
-               return False -- Se for retorna False para parar a leitura da FIFO
-           ["\r"] -> do
-               atomically $ broadcast server allMessages $ Reply clientName (getId msg) (tail (tail msg))
-               return True
-           _ -> do
-               atomically $ broadcast server allMessages $ Broadcast clientName "1" msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
-               return True -- E retorna True para manter runClient funcionando
- where
-   output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
-                                                       -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
+     Reply name id msg -> output $ name ++ ": Reply for message " ++ id ++ " >> " ++ msg
+     Command msg -> do -- Se for do tipo Command
+       if head(words msg) == "KILL_SERVICE"
+        then return False
+        else if head(words msg) == "/r"
+          then do
+            atomically $ broadcast server allMessages $ Reply clientName (getId (words msg)) (getMessage (words msg))
+            return True
+          else do
+            atomically $ broadcast server allMessages $ Broadcast clientName "1" msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
+            return True
+    where
+      output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
+                                                          -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
 
 
 -- calcId :: Server -> String
@@ -234,8 +234,12 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
 --   x <- count (Map.elems messagemap)
 --   return True
 
-getId :: String -> String
-getId msg = do
-  id <- head (tail (words msg))
-  test <- show id
-  return test
+getId :: [String] -> String
+getId wd = do
+  id <- head (tail wd)
+  return id
+
+getMessage :: [String] -> String
+getMessage wd = do
+  m <- unwords $ tail (tail wd)
+  return m
