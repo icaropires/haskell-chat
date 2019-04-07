@@ -1,5 +1,7 @@
 # Haskell Chat
-A basic chat with server and clients using basic TCP sockets and parallelism
+__This project is a fork from: "https://github.com/abhimanyuhazarika/chat-server-haskell"__
+
+A basic chat with server and clients using basic TCP sockets and parallelism.
 
 ## Features
 ### Basic features (WIP)
