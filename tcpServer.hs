@@ -16,15 +16,21 @@ import System.Environment
 
 main :: IO () -- Função principal do módulo Main
 main = withSocketsDo $ do -- Inicializar subsistema de rede em SO windows
+
   server <- newServer -- Chama função newServer, devolvendo um Servidor criado
   args <- getArgs -- Pega os argumentos passados como argumento na execução do programa
-  allMessages <- newAllMessages
+  allMessages <- newAllMessages -- Inicializa Tvar de mensagens
+
+
   let port = fromIntegral (read $ head args :: Int) -- read: Pega bloco de coisa e transforma em valor
                                                     -- | head args:Pega primeiro argumento de args | :: Int - Converte para inteiro
                                                     -- | fromIntegral : transforma inteiro ou integer em tipo de número mais genérico (Ex: Somar float e int)
+
   sock <- listenOn (PortNumber port) -- Salva em sock o retorno de listenOn, passando número da porta (O retorno é um socket (IO Socket - listening socket))
                                      -- PortNumber : Tipo relativo a um num
+
   printf "Chat server started on port: %s\n" (show port) -- Imprime a porta que será utilizada
+
   forever $ do -- forever: Define um loop
     (handle, host, port) <- accept sock -- Aceita uma conexão ao socket
                                         -- Retorna o gerenciador de IO, número do host e a porta da conexão
@@ -36,6 +42,7 @@ main = withSocketsDo $ do -- Inicializar subsistema de rede em SO windows
 -- Data structures and initialisation
 
 --Client
+
 type ClientName = String
 
 data Client = Client
@@ -54,13 +61,14 @@ newClient name handle = do -- Função que cria um novo cliente, recebe o nome e
                 , clientHandle   = handle
                 , clientSendChan = c
                 }
-
 --Server
+
 data Server = Server
   { clients :: TVar (Map ClientName Client) -- Server é composto por clients cuja estrutura consiste em local de memória compatilhada que
                                             -- contém o mapeamento dos nomes de todos os clientes?
-  -- , messages :: TVar (Map String Message)
-  }                                       
+  }
+
+--newServer
 
 newServer :: IO Server
 newServer = do -- Função new server cria servidor e retorna-o
@@ -69,7 +77,6 @@ newServer = do -- Função new server cria servidor e retorna-o
 
 --Message
 data Message = Notice String -- Mensagem do servidor
-             | Tell ClientName String -- Mensagem privada de outro cliente
              | Broadcast ClientName String String -- ? Mensagem de texto para vários clientes
              | Command String -- Linha de texto recebido do usuário
              | Reply ClientName String String -- Reply recebe o id da msg respondida e a msg de resposta
@@ -81,6 +88,8 @@ data Message = Notice String -- Mensagem do servidor
 
 data AllMessages = AllMessages
   { messages :: TVar (Map String Message) }
+
+--newMessage
 
 newAllMessages :: IO AllMessages
 newAllMessages = do
@@ -94,45 +103,47 @@ newMessage msg id = do
               , message = msg
             }
 
--- test :: Message -> IO ()
--- test = do
+-- Codigo Teste
+
+-- printMessage :: Message -> IO ()
+-- printMessage = do
 --   messagemap <- readTVar messages
 --   mapM_ (\message -> hPutStrLn clientHandle message) (Map.elems messagemap)
 
 --broadcast
+
 broadcast :: Server -> AllMessages -> Message -> STM ()
 broadcast Server{..} AllMessages{..} message = do -- Função broadcast que recebe os dados do servidor e a mensagem e envia a mensagem para todos os clientes no servidor
-  case message of
-    Broadcast id name msg -> do
-        messagemap <- readTVar messages
-        msg <- newMessage message "0"
-        writeTVar messages $ Map.insert "0" msg messagemap
+  messagemap <- readTVar messages
+  msg <- newMessage message "0"
+  writeTVar messages $ Map.insert "0" msg messagemap
   clientmap <- readTVar clients -- readTVar : Recebe o Tvar clients definido previamente e retorna os valores armazenados no momento
   mapM_ (\client -> sendMessage client message) (Map.elems clientmap) -- Para cada client em clientmap aplica a função sendMessage, enviando a Mensagem
                                                                   -- mapM_ : Ignora os retornos das funções
 
--- saveMessage :: Server ->
-
--- <<sendMessage
+-- sendMessage
 sendMessage :: Client -> Message -> STM ()
 sendMessage Client{..} msg = -- Função sendMessage recebe um Client com todos os atributos e a mensagem a ser enviada
   writeTChan clientSendChan msg -- Escreve na FIFO o cliente que tá mandando e a mensagem
                                 -- Tchan é um tipo abstrato que representa uma FIFO ilimitada
 
-
 --Server handling
 
 talk :: Handle -> Server -> AllMessages -> IO ()
 talk handle server@Server{..} allMessages@AllMessages{..} = do -- função talk recebe o handle e o servidor com lista de clientes,
-                                   -- server@Server{..} nomeia todo o server com o apelido server
+                                                               -- server@Server{..} nomeia todo o server com o apelido server
   hSetNewlineMode handle universalNewlineMode -- Configura modos de leitura (?) da linha como universal (usa o \n)
+
       -- Swallow carriage returns sent by telnet clients
+
   hSetBuffering handle LineBuffering -- Seta o buffer
   readName -- Chama função para ler o nome
  where
+
 --readName
+
   readName = do -- Função readName lê o nome e autentica
-    hPutStrLn handle "Please emessagenter username" -- Imprime mensagem usando o gerente IO
+    hPutStrLn handle "Please, send your username" -- Imprime mensagem usando o gerente IO
     name <- hGetLine handle -- Lê o nome com o hGetLine
     if null name -- Se estiver vazio
       then readName -- Pede pra ler de novo
@@ -200,7 +211,7 @@ handleMessage :: Server -> AllMessages -> Client -> Message -> IO Bool
 handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- Define a handleMessage passando o servidor, o client e a mensagem
   case message of
      Notice msg         -> output $ "*** " ++ msg -- Se a mensagem for do tipo Notice a saída recebe *** no início
-     Broadcast name id msg -> output $ name ++ ": [" ++ id ++ "] " ++ msg  -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem 
+     Broadcast name id msg -> output $ name ++ ": [" ++ id ++ "] " ++ msg  -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem
      Reply name id msg -> output $ name ++ ": Reply for message " ++ id ++ msg
      Command msg -> -- Se for do tipo Command
        case words msg of -- Testa se é KILL_SERVICE
@@ -210,7 +221,7 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
                atomically $ broadcast server allMessages $ Reply clientName (getId msg) (tail (tail msg))
                return True
            _ -> do
-               atomically $ broadcast server allMessages $ Broadcast clientName "0" msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
+               atomically $ broadcast server allMessages $ Broadcast clientName "1" msg  -- Senão roda as funções broadcast passando clientName e msg e server (?)
                return True -- E retorna True para manter runClient funcionando
  where
    output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
@@ -218,11 +229,10 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
 
 
 -- calcId :: Server -> String
--- calcId Server{..} = do
+--calcId allMessages@AllMessages{..} = do
 --   messagemap <- readTVar messages
---   items <- Map.size messagemap
---   return items
-
+--   x <- count (Map.elems messagemap)
+--   return True
 
 getId :: String -> String
 getId msg = do
