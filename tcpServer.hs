@@ -224,7 +224,12 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
         then return False
         else if head(words msg) == "/r"
           then do
-            atomically $ broadcast server allMessages $ Reply clientName (getId (words msg)) (getMessage (words msg))
+            checked <- checkId allMessages (getId (words msg))
+            if checked == True
+              then do
+                atomically $ broadcast server allMessages $ Reply clientName (getId (words msg)) (getMessage (words msg))
+              else do
+                atomically $ sendMessage client (Notice "id does not exist!")
             return True
           else do
             i <- readTVarIO countMessages
@@ -233,6 +238,16 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
     where
       output s = do hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
                                                           -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
+
+checkId :: AllMessages -> String -> IO Bool
+checkId AllMessages{..} idEntered = do
+  let idInt = read idEntered :: Int
+  count <- readTVarIO countMessages
+  if idInt < 0 || idInt > count
+    then
+      return False
+    else 
+      return True
 
 getId :: [String] -> String
 getId wd = do
