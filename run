@@ -1,0 +1,13 @@
+#!/bin/sh
+
+
+if [ "$#" != 0 ]; then
+	port=$1
+	sudo docker run --rm \
+		-p$port:8000 \
+		-it \
+		icaropires/haskell-chat
+else
+	echo -e "\033[0;31mYou didn't provide any arguments!\033[0m"
+	echo -e "\033[0;33mThe command should be: ./run [port]\033[0m"
+fi
