@@ -31,7 +31,14 @@ main = withSocketsDo $ do -- Inicializar subsistema de rede em SO windows
   sock <- listenOn (PortNumber port) -- Salva em sock o retorno de listenOn, passando número da porta (O retorno é um socket (IO Socket - listening socket))
                                      -- PortNumber : Tipo relativo a um num
 
-  printf "Chat server started on port: %s\n" (show port) -- Imprime a porta que será utilizada
+  printf "===================================================\n"
+  printf "          Welcome to the Haskell Chat!!!\n"
+  printf "===================================================\n"
+
+  printf "-----------------------------------------------------------\n"
+  printf "    Chat server running on port %s on all connected IPs\n" (show port) -- Imprime a porta que será utilizada
+  printf "-----------------------------------------------------------\n"
+
 
   forever $ do -- forever: Define um loop
     (handle, host, port) <- accept sock -- Aceita uma conexão ao socket
@@ -181,7 +188,7 @@ talk handle server@Server{..} allMessages@AllMessages{..} = do -- função talk 
   readName = do
     hPutStrLn handle "\ESC[2J"
     hPutStrLn handle "\n------------------------------------------"
-    hPutStrLn handle "Please, send your username" -- Imprime mensagem usando o gerente IO
+    hPutStrLn handle "Please, Enter a username:" -- Imprime mensagem usando o gerente IO
     name <- hGetLine handle -- Lê o nome com o hGetLine
     hPutStrLn handle "\n------------------------------------------"
     if null name -- Se estiver vazio
@@ -196,7 +203,7 @@ talk handle server@Server{..} allMessages@AllMessages{..} = do -- função talk 
              case ok of -- se ok contiver Nothing, é porque o nome já existe
                Nothing -> restore $ do  -- <2> -- chama restore
                   hPrintf handle
-                     "Name %s is in use please choose different username\n" name --Printa mensagem
+                     "Username '%s' is in use, please choose different one\n" name --Printa mensagem
                   readName -- Lê novamente o nome
                Just client -> -- Se for um Client (não existe ainda)
                   restore (runClient server client allMessages handle) -- <3> Se o nome for aceito, desmascaramos as exceções assíncronas ao chamar runClient
@@ -220,7 +227,7 @@ checkAddClient server@Server{..} allMessages@AllMessages{..} name handle = atomi
     else do client <- newClient name handle -- Se não tiver cria novo cliente passando o nome e o handle e armazena em client
             writeTVar clients $ Map.insert name client clientmap -- writeTVar recebe um Tvar clients um Map
                                                                  -- Map.insert recebe o nome, o client e insere como chave e valor no map "clientmap", passando esse resultado para TVar
-            broadcast server allMessages $ Notice ( name ++ " joined\n--------------------------\n") -- broadcast recebe servidor e a mensagem do tipo Notice que é composta por uma string (name ++ " joined"), compartilhando com todos
+            broadcast server allMessages $ Notice ( name ++ " joined\n------------------------------------------\n") -- broadcast recebe servidor e a mensagem do tipo Notice que é composta por uma string (name ++ " joined"), compartilhando com todos
             return (Just client)                           -- Retorna o cliente adicionado
 
 --removeClient Function : Remove cliente do map
@@ -248,9 +255,9 @@ runClient serv@Server{..} client@Client{..} allMessages@AllMessages{..} handle= 
  where
 
   printSession = do
-    hPutStrLn handle "-------------------------------------------"
-    hPutStrLn handle "telnet localhost 5555 back to conversation!"
-    hPutStrLn handle "-------------------------------------------"
+    hPutStrLn handle "----------------------------------------"
+    hPutStrLn handle "Exiting the chat... Come back later!"
+    hPutStrLn handle "----------------------------------------"
 
 -- receive Function : Mantem o "receptor" de mensagens rodando, lê do handle do cliente e envia (salva na FIFO)
                     -- Entrada : Sem argumento explícito
@@ -259,13 +266,13 @@ runClient serv@Server{..} client@Client{..} allMessages@AllMessages{..} handle= 
   receive = forever $ do  -- Define um loop
     msg <- hGetLine clientHandle -- hGetLine: Lê mensagem do gerenciador de IO do cliente (Handle) e retorna a mensagem (char) em msg
     atomically $ sendMessage client (Command msg) -- Dentro dessa transação executa sendMessage passando o client e uma mensagem do tipo Command
+    hPrintf handle ">>>"
 
   -- server Function : Lê as mensagens da FIFO e envia ao handle para que seja realizado o broadcast
                       -- Entradas : Nenhuma entradas
                       -- Saída: status do servidor (?)
 
-  server = join $ atomically $ do
-                                  -- join: Operador convencional de junção de monads (usado para remover um nível de estrutura monádica)
+  server = join $ atomically $ do -- join: Operador convencional de junção de monads (usado para remover um nível de estrutura monádica)
                                   --  join $ atomically $ : Composição dos monads join e atomically para rodar transações STM e ação IO retornada
    msg <- readTChan clientSendChan -- readTChan recebe a FIFO criada e passa seu conteúdo para msg
    return $ do --return da monad (?)
@@ -283,9 +290,9 @@ runClient serv@Server{..} client@Client{..} allMessages@AllMessages{..} handle= 
 handleMessage :: Server -> AllMessages -> Client -> Message -> IO Bool
 handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- Define a handleMessage passando o servidor, o client e a mensagem
   case message of
-     Notice msg         -> output $ "\n------------------------------------------\n*** " ++ msg -- Se a mensagem for do tipo Notice a saída recebe *** no início
+     Notice msg            -> output $ "\n------------------------------------------\n*** " ++ msg -- Se a mensagem for do tipo Notice a saída recebe *** no início
      Broadcast name id msg -> output $ name ++ ": [" ++ id ++ "] " ++ msg  ++ "\n" -- Se for um broadcast passando o nome e a mensagem, a saída apresenta o formato nome e mensagem
-     Reply name id msg -> output $ name ++ ": Reply for message " ++ id ++ " >> " ++ msg ++ "\n"
+     Reply name id msg     -> output $ name ++ ": Reply for message " ++ id ++ " >> " ++ msg ++ "\n"
      Command msg -> do -- Se for do tipo Command
        if head(words msg) == "/q"
         then return False
@@ -296,7 +303,7 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
               then do
                 atomically $ broadcast server allMessages $ Reply clientName (getId (words msg)) (getMessage (words msg)) -- Faz broadcast
               else do
-                atomically $ sendMessage client (Notice "id does not exist!") -- Informa que mensagem que está rentando replicar não existe
+                atomically $ sendMessage client (Notice "Can't reply. Invalid message identifier!") -- Informa que mensagem que está rentando replicar não existe
             return True
           else do -- Se não for de reply realiza Broadcast da mensagem normalmente
             i <- readTVarIO countMessages
@@ -304,8 +311,8 @@ handleMessage server allMessages@AllMessages{..} client@Client{..} message = -- 
             return True
     where
       output s = do
-          hPutStrLn clientHandle s; return True -- Define que o output acompanhado de qualquer argumento corresponde a
-                                                          -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
+          hPutStrLn clientHandle s -- Define que o output acompanhado de qualquer argumento corresponde a
+          return True -- imprimir (hPutStrLn) usando o gerenciador de IO (clientHandle) a mensagem s
 
 -- checkId Function : Checa a validade do ID informado (Entre 1 e o último criado)
                     -- Entradas : Todas as mensagens e o id informado pelo usuário
