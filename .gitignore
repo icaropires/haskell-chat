@@ -1,6 +1,7 @@
 dist
 dist-*
 cabal-dev
+src/server
 *.o
 *.hi
 *.chi

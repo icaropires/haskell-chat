@@ -1,18 +1,19 @@
-
 {-# LANGUAGE RecordWildCards #-}
 module Main where
 
-import Text.Printf
-import System.IO
-import Network
+import Text.Printf (printf, hPrintf)
+import System.IO (Handle, BufferMode(LineBuffering), hSetNewlineMode, universalNewlineMode, hSetBuffering, hClose, hPutStrLn, hGetLine)
 import qualified Data.Map as Map
-import Data.Map (Map, size)
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Concurrent.Async
-import Control.Exception
-import Control.Monad
-import System.Environment
+import Network (PortID(PortNumber), listenOn, accept, withSocketsDo)
+import System.Environment (getArgs)
+import Control.Monad (join, forever, when)
+import Control.Monad.STM (atomically)
+import Control.Concurrent (forkFinally)
+import Control.Concurrent.STM (STM)
+import Control.Concurrent.STM.TVar (TVar, newTVar, newTVarIO, readTVar, readTVarIO, writeTVar, modifyTVar')
+import Control.Concurrent.STM.TChan (TChan, newTChan, writeTChan, readTChan)
+import Control.Concurrent.Async (race)
+import Control.Exception (mask, finally)
 
 -- main Function : Função principal do programa, faz todas as chamadas de métodos iniciais e mantém a conexão com o socket
 main :: IO ()
@@ -68,7 +69,7 @@ newClient name handle = do -- Função que cria um novo cliente, recebe o nome e
 
 -- Server data : Define a estrutura do servidor como uma Tvar que armazena um Map cuja chave é o nome do Cliente e Client
 data Server = Server
-  { clients :: TVar (Map ClientName Client) -- Server é composto por clients cuja estrutura consiste em local de memória compatilhada que
+  { clients :: TVar (Map.Map ClientName Client) -- Server é composto por clients cuja estrutura consiste em local de memória compatilhada que
                                             -- contém o mapeamento dos nomes de todos os clientes?
   }
 
@@ -96,7 +97,7 @@ data Message = Notice String -- Mensagem do servidor
 
 --- AllMessages data : Define AllMessages como TVar de map de mensagens e contador de mensagens
 data AllMessages = AllMessages
-  { messages :: TVar (Map String Message)
+  { messages :: TVar (Map.Map String Message)
   , countMessages :: TVar (Int)
   }
 
